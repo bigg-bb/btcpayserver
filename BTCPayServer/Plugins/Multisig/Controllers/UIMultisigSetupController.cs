@@ -16,6 +16,7 @@ using BTCPayServer.Services.Wallets;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Localization;
+using Microsoft.Extensions.Logging;
 
 namespace BTCPayServer.Plugins.Multisig.Controllers;
 
@@ -31,7 +32,8 @@ public class UIMultisigSetupController(
     OnChainWalletSetupService onChainWalletSetupService,
     MultisigService multisigService,
     MultisigNotificationService multisigNotificationService,
-    IStringLocalizer stringLocalizer) : Controller
+    IStringLocalizer stringLocalizer,
+    ILogger<UIMultisigSetupController> logger) : Controller
 {
     private static bool IsSupportedCryptoCode(string? cryptoCode) =>
         string.Equals(cryptoCode, "BTC", StringComparison.OrdinalIgnoreCase);
@@ -101,11 +103,20 @@ public class UIMultisigSetupController(
                                       ?? await multisigService.GetLatestPendingMultisigSetup(vm.StoreId, vm.CryptoCode);
         }
 
-        if (finalizedMultisigRequest is not null)
-            await multisigNotificationService.SendWalletCreatedEmails(HttpContext, vm.StoreId, vm.CryptoCode, finalizedMultisigRequest);
-
         if (!string.IsNullOrEmpty(vm.MultisigRequestId))
             await storeRepository.UpdateSetting<PendingMultisigSetupData>(vm.StoreId, MultisigService.GetPendingMultisigSettingName(vm.CryptoCode), null);
+
+        if (finalizedMultisigRequest is not null)
+        {
+            try
+            {
+                await multisigNotificationService.SendWalletCreatedEmails(HttpContext, vm.StoreId, vm.CryptoCode, finalizedMultisigRequest);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to send wallet-created multisig emails for store {StoreId}", vm.StoreId);
+            }
+        }
 
         TempData[WellKnownTempData.SuccessMessage] = stringLocalizer["Wallet settings for {0} have been updated.", network.CryptoCode].Value;
         return RedirectToAction(nameof(BTCPayServer.Controllers.UIStoreOnChainWalletsController.WalletSettings), "UIStoreOnChainWallets", new { area = "", storeId = vm.StoreId, cryptoCode = vm.CryptoCode });
